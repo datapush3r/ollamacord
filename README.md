@@ -1,5 +1,5 @@
 <h1 align="center">
-  llmcord
+  ollamacord
 </h1>
 
 <h3 align="center"><i>
@@ -10,7 +10,7 @@
   <img src="https://github.com/user-attachments/assets/7791cc6b-6755-484f-a9e3-0707765b081f" alt="">
 </p>
 
-llmcord transforms Discord into a collaborative LLM frontend. It works with practically any LLM, remote or locally hosted.
+ollamacord transforms Discord into a collaborative LLM frontend. It works with practically any LLM, remote or locally hosted.
 
 ## Features
 
@@ -32,7 +32,7 @@ Additionally:
 ### Model switching with `/model`:
 ![image](https://github.com/user-attachments/assets/9fbb9f56-9004-4997-a864-5b2ec67bac8f)
 
-llmcord supports remote models from:
+ollamacord supports remote models from:
 - [OpenAI API](https://platform.openai.com/docs/models)
 - [xAI API](https://docs.x.ai/docs/models)
 - [Google Gemini API](https://ai.google.dev/gemini-api/docs/models)
@@ -65,7 +65,7 @@ Or run local models with:
 
 1. Clone the repo:
    ```bash
-   git clone https://github.com/jakobdylanc/llmcord
+   git clone https://github.com/datapush3r/ollamacord
    ```
 
 2. Create a copy of "config-example.yaml" named "config.yaml" and set it up:
@@ -97,7 +97,7 @@ Or run local models with:
    **No Docker:**
    ```bash
    python -m pip install -U -r requirements.txt
-   python llmcord.py
+   python ollamacord.py
    ```
 
    **With Docker:**
@@ -105,20 +105,12 @@ Or run local models with:
    docker compose up
    ```
 
-## Notes
-
-- If you're having issues, try my suggestions [here](https://github.com/jakobdylanc/llmcord/issues/19)
-
-- Only models from OpenAI API and xAI API are "user identity aware" because only they support the "name" parameter in the message object. Hopefully more providers support this in the future.
-
-- PRs are welcome :)
-
 ## Star History
 
-<a href="https://star-history.com/#jakobdylanc/llmcord&Date">
+<a href="https://star-history.com/#datapush3r/ollamacord&Date">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=jakobdylanc/llmcord&type=Date&theme=dark" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=jakobdylanc/llmcord&type=Date" />
-    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=jakobdylanc/llmcord&type=Date" />
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=datapush3r/ollamacord&type=Date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=datapush3r/ollamacord&type=Date" />
+    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=datapush3r/ollamacord&type=Date" />
   </picture>
 </a>
