@@ -19,7 +19,7 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s: %(message)s",
 )
 
-VISION_MODEL_TAGS = ("gpt-4", "o3", "o4", "claude", "gemini", "gemma", "llama", "pixtral", "mistral", "vision", "vl")
+VISION_MODEL_TAGS = ("gemma", "llama", "pixtral", "mistral", "vision", "vl")
 EMBED_COLOR_COMPLETE = discord.Color.dark_green()
 EMBED_COLOR_INCOMPLETE = discord.Color.orange()
 STREAMING_INDICATOR = " ⚪"
@@ -80,28 +80,6 @@ async def local_ollama_model_autocomplete(interaction: discord.Interaction, curr
         logging.error(f"Error fetching local ollama models: {e}")
         return []
 
-# --- Interactive Buttons View ---
-class ResponseView(discord.ui.View):
-    def __init__(self, original_message: discord.Message):
-        super().__init__(timeout=None)
-        self.original_message = original_message
-
-    @discord.ui.button(label="Regenerate", style=discord.ButtonStyle.primary, emoji="🔄", custom_id="regenerate_button")
-    async def regenerate(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer()
-        asyncio.create_task(on_message(self.original_message))
-
-    @discord.ui.button(label="Save to DM", style=discord.ButtonStyle.secondary, emoji="💾", custom_id="save_dm_button")
-    async def save_to_dm(self, interaction: discord.Interaction, button: discord.ui.Button):
-        try:
-            embed_to_save = interaction.message.embeds[0]
-            await interaction.user.send(embed=embed_to_save)
-            await interaction.response.send_message("I've sent the response to your DMs!", ephemeral=True)
-        except discord.Forbidden:
-            await interaction.response.send_message("I couldn't send you a DM. Please check your privacy settings.", ephemeral=True)
-        except Exception as e:
-            await interaction.response.send_message(f"An error occurred while saving to DMs: {e}", ephemeral=True)
-
 # --- Slash Commands ---
 ollamacord_group = Group(name="ollamacord", description="Commands for the Ollamacord bot.")
 
@@ -113,9 +91,6 @@ async def help_command(interaction: discord.Interaction):
     embed.add_field(name="/ollamacord download", value="Download a model from the Ollama library to use with the bot.", inline=False)
     embed.add_field(name="/ollamacord switch", value="Switch between your locally downloaded models.", inline=False)
     embed.add_field(name="Admin Commands", value="Admins can use `/ollamacord admin` to `list`, `show`, `rm`, and `pull` local models.", inline=False)
-    embed.add_field(name="Interactive Buttons", value="Every response comes with buttons:\n"
-                                                      "🔄 **Regenerate**: Ask the model to generate a new response to your last message.\n"
-                                                      "💾 **Save to DM**: Saves a copy of the bot's response to your Direct Messages.", inline=False)
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @ollamacord_group.command(name="search", description="Search for models in the Ollama library.")
@@ -346,20 +321,33 @@ async def on_message(new_msg: discord.Message) -> None:
         curr_node = msg_nodes.setdefault(curr_msg.id, MsgNode())
         async with curr_node.lock:
             if curr_node.text is None:
-                cleaned_content = curr_msg.content.removeprefix(discord_bot.user.mention).lstrip()
+                curr_node.role = "assistant" if curr_msg.author == discord_bot.user else "user"
+                text_parts = []
+                if curr_node.role == "assistant":
+                    if curr_msg.embeds:
+                        full_description = curr_msg.embeds[0].description
+                        parts = full_description.split('\n\n', 1)
+                        if len(parts) > 1 and parts[0].startswith('**Replying to'):
+                            text_parts.append(parts[1])
+                        else:
+                            text_parts.append(full_description)
+                else:
+                    cleaned_content = curr_msg.content.removeprefix(discord_bot.user.mention).lstrip()
+                    if cleaned_content:
+                        text_parts.append(cleaned_content)
+                    text_parts.extend("\n".join(filter(None, (e.title, e.description, e.footer.text))) for e in curr_msg.embeds)
+
                 good_attachments = [att for att in curr_msg.attachments if att.content_type and any(att.content_type.startswith(x) for x in ("text", "image"))]
                 attachment_responses = await asyncio.gather(*[httpx_client.get(att.url) for att in good_attachments])
-                curr_node.text = "\n".join(
-                    ([cleaned_content] if cleaned_content else [])
-                    + ["\n".join(filter(None, (embed.title, embed.description, embed.footer.text))) for embed in curr_msg.embeds]
-                    + [resp.text for att, resp in zip(good_attachments, attachment_responses) if att.content_type.startswith("text")]
-                )
+                text_parts.extend(resp.text for att, resp in zip(good_attachments, attachment_responses) if att.content_type.startswith("text"))
+                
+                curr_node.text = "\n".join(text_parts)
+                
                 curr_node.images = [
                     dict(type="image_url", image_url=dict(url=f"data:{att.content_type};base64,{b64encode(resp.content).decode('utf-8')}"))
                     for att, resp in zip(good_attachments, attachment_responses)
                     if att.content_type.startswith("image")
                 ]
-                curr_node.role = "assistant" if curr_msg.author == discord_bot.user else "user"
                 curr_node.user_id = curr_msg.author.id if curr_node.role == "user" else None
                 curr_node.has_bad_attachments = len(curr_msg.attachments) > len(good_attachments)
                 try:
@@ -421,7 +409,6 @@ async def on_message(new_msg: discord.Message) -> None:
 
     use_plain_responses = config.get("use_plain_responses", False)
     max_message_length = 2000 if use_plain_responses else (4096 - len(STREAMING_INDICATOR) - len(reply_quote))
-    view = ResponseView(original_message=new_msg)
 
     try:
         async with new_msg.channel.typing():
@@ -453,15 +440,16 @@ async def on_message(new_msg: discord.Message) -> None:
                         
                         embed.description = reply_quote + cleaned_description
                         embed.color = EMBED_COLOR_COMPLETE if msg_split_incoming or is_good_finish else EMBED_COLOR_INCOMPLETE
+                        embed.set_footer(text=f"Model: {model}")
 
                         if start_next_msg:
                             reply_to_msg = new_msg if not response_msgs else response_msgs[-1]
-                            response_msg = await reply_to_msg.reply(embed=embed, silent=True, view=view)
+                            response_msg = await reply_to_msg.reply(embed=embed, silent=True)
                             response_msgs.append(response_msg)
                             msg_nodes[response_msg.id] = MsgNode(parent_msg=new_msg)
                             await msg_nodes[response_msg.id].lock.acquire()
                         else:
-                            edit_task = asyncio.create_task(response_msgs[-1].edit(embed=embed, view=view))
+                            edit_task = asyncio.create_task(response_msgs[-1].edit(embed=embed))
                         last_task_time = datetime.now().timestamp()
 
             if use_plain_responses:
@@ -469,7 +457,7 @@ async def on_message(new_msg: discord.Message) -> None:
                 for content in cleaned_contents:
                     if not content: continue
                     reply_to_msg = new_msg if not response_msgs else response_msgs[-1]
-                    response_msg = await reply_to_msg.reply(content=content, suppress_embeds=True)
+                    response_msg = await reply_to_msg.reply(content=f"{content}\n\n*Model: {model}*", suppress_embeds=True)
                     response_msgs.append(response_msg)
                     msg_nodes[response_msg.id] = MsgNode(parent_msg=new_msg)
                     await msg_nodes[response_msg.id].lock.acquire()
