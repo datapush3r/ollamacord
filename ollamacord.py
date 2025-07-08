@@ -18,7 +18,6 @@ logging.basicConfig(
 )
 
 VISION_MODEL_TAGS = ("gpt-4", "o3", "o4", "claude", "gemini", "gemma", "llama", "pixtral", "mistral", "vision", "vl")
-PROVIDERS_SUPPORTING_USERNAMES = ("openai", "x-ai")
 
 EMBED_COLOR_COMPLETE = discord.Color.dark_green()
 EMBED_COLOR_INCOMPLETE = discord.Color.orange()
@@ -162,7 +161,6 @@ async def on_message(new_msg: discord.Message) -> None:
     openai_client = AsyncOpenAI(base_url=base_url, api_key=api_key)
 
     accept_images = any(x in model.lower() for x in VISION_MODEL_TAGS)
-    accept_usernames = any(x in provider_slash_model.lower() for x in PROVIDERS_SUPPORTING_USERNAMES)
 
     max_text = config.get("max_text", 100000)
     max_images = config.get("max_images", 5) if accept_images else 0
@@ -232,9 +230,6 @@ async def on_message(new_msg: discord.Message) -> None:
 
             if content != "":
                 message = dict(content=content, role=curr_node.role)
-                if accept_usernames and curr_node.user_id != None:
-                    message["name"] = str(curr_node.user_id)
-
                 messages.append(message)
 
             if len(curr_node.text) > max_text:
@@ -254,8 +249,6 @@ async def on_message(new_msg: discord.Message) -> None:
         now = datetime.now().astimezone()
 
         system_prompt = system_prompt.replace("{date}", now.strftime("%B %d %Y")).replace("{time}", now.strftime("%H:%M:%S %Z%z")).strip()
-        if accept_usernames:
-            system_prompt += "\nUser's names are their Discord IDs and should be typed as '<@ID>'."
 
         messages.append(dict(role="system", content=system_prompt))
 
