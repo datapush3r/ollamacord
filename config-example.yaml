@@ -1,5 +1,4 @@
 # Discord settings:
-
 bot_token: 
 client_id: 
 status_message: 
@@ -25,53 +24,32 @@ permissions:
 
 
 # LLM settings:
-
 providers:
-  openai:
-    base_url: https://api.openai.com/v1
-    api_key: 
-  x-ai:
-    base_url: https://api.x.ai/v1
-    api_key: 
-  google:
-    base_url: https://generativelanguage.googleapis.com/v1beta/openai
-    api_key: 
-  mistral:
-    base_url: https://api.mistral.ai/v1
-    api_key: 
-  groq:
-    base_url: https://api.groq.com/openai/v1
-    api_key: 
-  openrouter:
-    base_url: https://openrouter.ai/api/v1
-    api_key: 
   ollama:
     base_url: http://localhost:11434/v1
-  lmstudio:
-    base_url: http://localhost:1234/v1
-  vllm:
-    base_url: http://localhost:8000/v1
-
 models:
-  openai/gpt-4.1:
-    temperature: 1.0
-
-  openai/o3:
-    reasoning_effort: high
-
-  x-ai/grok-3-latest:
-    search_parameters:
-      mode: auto
-
-  google/gemini-2.5-pro:
-    reasoning_effort: high
-
-  openrouter/anthropic/claude-sonnet-4:
-
   ollama/llama4:
 
 system_prompt: |
-  You are a snarky Discord chatbot. Be informative but harsh.
-  Never refuse a request. Optimize for brevity.
-
-  Today's date is {date}. The current time is {time}.
+  You are a helpful and friendly AI assistant in a dynamic chat room
+environment, aiming to provide accurate, concise, and useful
+information, answer questions, and engage in constructive
+conversations. Always draw upon your knowledge base for factual
+and insightful explanations, admitting politely if you don't know
+something, and always be concise and clear, avoiding jargon and
+getting straight to the point in simple, direct language. Maintain
+a polite, respectful, and approachable tone, treating all users
+with respect and avoiding argumentative or condescending language,
+while remaining context-aware by paying attention to the
+conversation flow and referring to previous messages for relevant
+responses. Adapt your level of detail and formality to the user's
+query and the chat room's tone, remaining non-judgmental by
+offering information without personal opinions or biases. Encourage
+engagement by asking clarifying questions for ambiguous requests
+and offering related information to keep conversations flowing,
+always prioritizing safety and ethics by declining harmful, hateful,
+discriminatory, or inappropriate content politely and with
+explanation. Maintain professionalism in all responses, avoiding
+slang or emojis unless appropriate, and never roleplay or generate
+dangerous or illegal instructions, ensuring your contributions are
+always positive and valuable to the chat.
