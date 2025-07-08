@@ -10,7 +10,7 @@
   <img src="https://github.com/user-attachments/assets/7791cc6b-6755-484f-a9e3-0707765b081f" alt="">
 </p>
 
-ollamacord transforms Discord into a collaborative LLM frontend. It works with practically any LLM, remote or locally hosted.
+ollamacord transforms Discord into a collaborative LLM frontend.
 
 ## Features
 
@@ -32,20 +32,8 @@ Additionally:
 ### Model switching with `/model`:
 ![image](https://github.com/user-attachments/assets/9fbb9f56-9004-4997-a864-5b2ec67bac8f)
 
-ollamacord supports remote models from:
-- [OpenAI API](https://platform.openai.com/docs/models)
-- [xAI API](https://docs.x.ai/docs/models)
-- [Google Gemini API](https://ai.google.dev/gemini-api/docs/models)
-- [Mistral API](https://docs.mistral.ai/getting-started/models/models_overview)
-- [Groq API](https://console.groq.com/docs/models)
-- [OpenRouter API](https://openrouter.ai/models)
-
-Or run local models with:
+run local models with:
 - [Ollama](https://ollama.com)
-- [LM Studio](https://lmstudio.ai)
-- [vLLM](https://github.com/vllm-project/vllm)
-
-...Or use any other OpenAI compatible API server.
 
 ---
 
