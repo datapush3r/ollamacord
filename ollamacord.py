@@ -141,6 +141,22 @@ async def on_message(new_msg: discord.Message) -> None:
     provider, model = provider_slash_model.split("/", 1)
     model_parameters = config["models"].get(provider_slash_model, None)
 
+    if provider == "ollama":
+        try:
+            ollama_base_url = config["providers"]["ollama"]["base_url"].removesuffix("/v1")
+            async with httpx.AsyncClient(base_url=ollama_base_url) as ollama_client:
+                response = await ollama_client.post("/api/show", json={"name": model}, timeout=5)
+                if response.status_code == 404:
+                    await new_msg.channel.send(f"Model `{model}` not found. Downloading...")
+                    pull_response = await ollama_client.post("/api/pull", json={"name": model}, timeout=None)
+                    pull_response.raise_for_status()
+                    await new_msg.channel.send(f"Model `{model}` download complete.")
+
+                response.raise_for_status()
+
+        except (httpx.RequestError, httpx.HTTPStatusError) as e:
+            logging.exception(f"Failed to communicate with Ollama API: {e}")
+
     base_url = config["providers"][provider]["base_url"]
     api_key = config["providers"][provider].get("api_key", "sk-no-key-required")
     openai_client = AsyncOpenAI(base_url=base_url, api_key=api_key)
