@@ -1,5 +1,5 @@
 <h1 align="center">
-  ollamacord
+  Ollamacord
 </h1>
 
 <h3 align="center"><i>
@@ -10,46 +10,62 @@
   <img src="https://github.com/user-attachments/assets/7791cc6b-6755-484f-a9e3-0707765b081f" alt="">
 </p>
 
-ollamacord transforms Discord into a collaborative LLM frontend.
+Ollamacord transforms Discord into a collaborative frontend for local language models, powered by [Ollama](https://ollama.com).
+
+This project is a fork of [llmcord](https://github.com/jakobdylanc/llmcord), redesigned to focus exclusively on Ollama for a more streamlined and powerful experience.
 
 ## Features
 
-### Reply-based chat system:
-Just @ the bot to start a conversation and reply to continue. Build conversations with reply chains!
-
-You can:
-- Branch conversations endlessly
-- Continue other people's conversations
-- @ the bot while replying to ANY message to include it in the conversation
-
-Additionally:
-- When DMing the bot, conversations continue automatically (no reply required). To start a fresh conversation, just @ the bot. You can still reply to continue from anywhere.
-- You can branch conversations into [threads](https://support.discord.com/hc/en-us/articles/4403205878423-Threads-FAQ). Just create a thread from any message and @ the bot inside to continue.
-- Back-to-back messages from the same user are automatically chained together. Just reply to the latest one and the bot will see all of them.
-
----
-
-### Model switching with `/model`:
-![image](https://github.com/user-attachments/assets/9fbb9f56-9004-4997-a864-5b2ec67bac8f)
-
-run local models with:
-- [Ollama](https://ollama.com)
-
----
-
-### And more:
-- Supports image attachments when using a vision model (like gpt-4.1, claude-4, llama-4, etc.)
-- Supports text file attachments (.txt, .py, .c, etc.)
-- Customizable personality (aka system prompt)
-- Streamed responses (turns green when complete, automatically splits into separate messages when too long)
-- Hot reloading config (you can change settings without restarting the bot)
-- Displays helpful warnings when appropriate (like "⚠️ Only using last 25 messages" when the customizable message limit is exceeded)
-- Caches message data in a size-managed (no memory leaks) and mutex-protected (no race conditions) global dictionary to maximize efficiency and minimize Discord API calls
-- Fully asynchronous
-- 1 Python file, ~200 lines of code
+* **Seamless Chat Experience**: Start a conversation by mentioning the bot and continue it with replies. The bot automatically quotes your message for context, making conversations easy to follow.
+* **Interactive Responses**: Every message comes with buttons to `Regenerate` the response or `Save` it to your DMs for later.
+* **Dynamic Model Management**: No need to edit config files to change models. The bot automatically detects your locally downloaded Ollama models.
+* **Full Admin Control**: A suite of admin commands allows you to manage your Ollama instance directly from Discord, including listing, downloading, and removing models.
+* **Advanced Features**:
+    * Supports image attachments with vision models.
+    * Customizable system prompt to define the bot's personality.
+    * Handles long responses by automatically splitting them into multiple messages.
+    * Efficient and asynchronous, built on a single Python file.
 
 ## Instructions
 
-1. Clone the repo:
-   ```bash
-   git clone https://github.com/datapush3r/ollamacord
+1.  **Clone the repo:**
+    ```bash
+    git clone [https://github.com/datapush3r/ollamacord](https://github.com/datapush3r/ollamacord)
+    ```
+2.  **Set up your configuration:**
+    Create a copy of `config-example.yaml` and name it `config.yaml`. Fill in your Discord bot token and client ID.
+3.  **Run the bot:**
+    * **With Docker:**
+        ```bash
+        docker compose up
+        ```
+    * **Without Docker:**
+        ```bash
+        python -m pip install -U -r requirements.txt
+        python ollamacord.py
+        ```
+
+## Commands
+
+* `/ollamacord help`: Shows a complete list of commands and features.
+* `/ollamacord search <query>`: Searches the Ollama model library for new models to download.
+* `/ollamacord download <model_name>`: Downloads a new model from the library to your local Ollama instance.
+* `/ollamacord switch <model_name>`: Switches the active model to one of your locally downloaded models.
+
+### Admin Commands
+
+* `/ollamacord admin list`: Lists all models available in your local Ollama instance.
+* `/ollamacord admin show <model_name>`: Shows detailed information about a specific local model.
+* `/ollamacord admin ps`: Lists all models currently running in memory.
+* `/ollamacord admin rm <model_name>`: Deletes a model from your local storage.
+* `/ollamacord admin pull <model_name>`: An alias for the `/ollamacord download` command.
+
+## Star History
+
+<a href="https://star-history.com/#datapush3r/ollamacord&Date">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=datapush3r/ollamacord&type=Date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=datapush3r/ollamacord&type=Date" />
+    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=datapush3r/ollamacord&type=Date" />
+  </picture>
+</a>
