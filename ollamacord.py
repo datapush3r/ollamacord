@@ -3,6 +3,7 @@ from base64 import b64encode
 from dataclasses import dataclass, field
 from datetime import datetime
 import logging
+import json
 import re
 from typing import Any, Literal, Optional
 
@@ -29,8 +30,19 @@ OLLAMA_API_BASE_URL = "https://ollamadb.dev/api/v1"
 
 # --- Config and State ---
 def get_config(filename: str = "config.yaml") -> dict[str, Any]:
-    with open(filename, encoding="utf-8") as file:
-        return yaml.safe_load(file)
+    try:
+        with open(filename, encoding="utf-8") as file:
+            return yaml.safe_load(file)
+    except FileNotFoundError:
+        logging.critical(f"Config file '{filename}' not found. Please copy 'config-example.yaml' to '{filename}' and fill in your details.")
+        exit()
+    except yaml.YAMLError as e:
+        logging.critical(f"Error parsing YAML from '{filename}': {e}")
+        exit()
+
+def save_config(data: dict[str, Any], filename: str = "config.yaml"):
+    with open(filename, 'w', encoding='utf-8') as file:
+        yaml.dump(data, file)
 
 config = get_config()
 curr_model = None # Will be set in on_ready
@@ -90,7 +102,7 @@ async def help_command(interaction: discord.Interaction):
     embed.add_field(name="/ollamacord search", value="Search for new models to download from the Ollama library.", inline=False)
     embed.add_field(name="/ollamacord download", value="Download a model from the Ollama library to use with the bot.", inline=False)
     embed.add_field(name="/ollamacord switch", value="Switch between your locally downloaded models.", inline=False)
-    embed.add_field(name="Admin Commands", value="Admins can use `/ollamacord admin` to `list`, `show`, `rm`, and `pull` local models.", inline=False)
+    embed.add_field(name="Admin Commands", value="Admins can use `/ollamacord admin` to `list`, `show`, `rm`, `pull`, and `setdefault` local models.", inline=False)
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @ollamacord_group.command(name="search", description="Search for models in the Ollama library.")
@@ -111,8 +123,11 @@ async def model_search(interaction: discord.Interaction, query: str):
             pulls = model.get('pulls', 0)
             embed.add_field(name=name, value=f"**Pulls:** {pulls:,}\n{description}", inline=False)
         await interaction.followup.send(embed=embed, ephemeral=True)
-    except httpx.HTTPError as e:
-        await interaction.followup.send(f"An error occurred while searching for models: {e}", ephemeral=True)
+    except httpx.RequestError as e:
+        await interaction.followup.send(f"An error occurred while connecting to the Ollama library: {e}", ephemeral=True)
+    except httpx.HTTPStatusError as e:
+        await interaction.followup.send(f"The Ollama library returned an error: {e.response.status_code}", ephemeral=True)
+
 
 @ollamacord_group.command(name="download", description="Download a model from the Ollama library.")
 @discord.app_commands.autocomplete(model_name=search_models_autocomplete)
@@ -125,8 +140,10 @@ async def model_download(interaction: discord.Interaction, model_name: str):
             pull_response = await ollama_client.post("/api/pull", json={"name": model_name})
             pull_response.raise_for_status()
         await interaction.followup.send(f"Model `{model_name}` has been downloaded successfully.")
+    except httpx.ConnectError:
+        await interaction.followup.send(f"Could not connect to Ollama at {config['ollama_base_url']}. Please ensure it's running.", ephemeral=False)
     except httpx.HTTPStatusError as e:
-        await interaction.followup.send(f"An HTTP error occurred: {e}", ephemeral=False)
+        await interaction.followup.send(f"An HTTP error occurred while downloading: {e.response.text}", ephemeral=False)
     except Exception as e:
         await interaction.followup.send(f"An unexpected error occurred: {e}", ephemeral=False)
 
@@ -151,6 +168,23 @@ async def is_admin(interaction: discord.Interaction) -> bool:
         return False
     return True
 
+@admin_group.command(name="setdefault", description="Set the default model in the config file.")
+@discord.app_commands.autocomplete(model_name=local_ollama_model_autocomplete)
+async def admin_setdefault(interaction: discord.Interaction, model_name: str):
+    if not await is_admin(interaction): return
+    await interaction.response.defer(ephemeral=True)
+    try:
+        current_config = await asyncio.to_thread(get_config)
+        current_config['default_model'] = model_name
+        await asyncio.to_thread(save_config, current_config)
+        global curr_model
+        curr_model = model_name
+        await interaction.followup.send(f"Default model has been set to `{model_name}`.", ephemeral=True)
+    except IOError as e:
+        await interaction.followup.send(f"An error occurred while writing to the config file: {e}", ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(f"An unexpected error occurred while setting the default model: {e}", ephemeral=True)
+
 @admin_group.command(name="list", description="List all models available locally.")
 async def admin_list(interaction: discord.Interaction):
     if not await is_admin(interaction): return
@@ -168,6 +202,8 @@ async def admin_list(interaction: discord.Interaction):
         description = "\n".join([f"**{model.get('name')}** ({model.get('size', 0) / (1024**3):.2f} GB)" for model in models])
         embed.description = description
         await interaction.followup.send(embed=embed, ephemeral=True)
+    except httpx.ConnectError:
+        await interaction.followup.send(f"Could not connect to Ollama at {config['ollama_base_url']}.", ephemeral=True)
     except Exception as e:
         await interaction.followup.send(f"An error occurred: {e}", ephemeral=True)
 
@@ -189,6 +225,13 @@ async def admin_show(interaction: discord.Interaction, model_name: str):
             detail_str = "\n".join([f"**{k.replace('_', ' ').title()}**: {v}" for k,v in details.items()])
             embed.add_field(name="Details", value=detail_str, inline=False)
         await interaction.followup.send(embed=embed, ephemeral=True)
+    except httpx.ConnectError:
+        await interaction.followup.send(f"Could not connect to Ollama at {config['ollama_base_url']}.", ephemeral=True)
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            await interaction.followup.send(f"Model `{model_name}` not found locally.", ephemeral=True)
+        else:
+            await interaction.followup.send(f"An HTTP error occurred: {e.response.text}", ephemeral=True)
     except Exception as e:
         await interaction.followup.send(f"An error occurred: {e}", ephemeral=True)
 
@@ -209,6 +252,8 @@ async def admin_ps(interaction: discord.Interaction):
         description = "\n".join([f"**{m.get('name')}** ({m.get('size', 0) / (1024**3):.2f} GB)" for m in models])
         embed.description = description
         await interaction.followup.send(embed=embed, ephemeral=True)
+    except httpx.ConnectError:
+        await interaction.followup.send(f"Could not connect to Ollama at {config['ollama_base_url']}.", ephemeral=True)
     except Exception as e:
         await interaction.followup.send(f"An error occurred: {e}\n(Note: This command may require a recent version of Ollama.)", ephemeral=True)
 
@@ -220,9 +265,16 @@ async def admin_rm(interaction: discord.Interaction, model_name: str):
     try:
         ollama_base_url = config["ollama_base_url"].removesuffix("/v1")
         async with httpx.AsyncClient(base_url=ollama_base_url) as ollama_client:
-            response = await ollama_client.delete("/api/delete", json={"name": model_name})
+            response = await ollama_client.request("DELETE", "/api/delete", json={"name": model_name})
             response.raise_for_status()
         await interaction.followup.send(f"Successfully removed model `{model_name}`.", ephemeral=True)
+    except httpx.ConnectError:
+        await interaction.followup.send(f"Could not connect to Ollama at {config['ollama_base_url']}.", ephemeral=True)
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            await interaction.followup.send(f"Model `{model_name}` not found, so it could not be removed.", ephemeral=True)
+        else:
+            await interaction.followup.send(f"An HTTP error occurred: {e.response.text}", ephemeral=True)
     except Exception as e:
         await interaction.followup.send(f"An error occurred: {e}", ephemeral=True)
 
@@ -242,18 +294,25 @@ async def on_ready() -> None:
     
     # Set the initial model
     try:
-        ollama_base_url = config["ollama_base_url"].removesuffix("/v1")
-        async with httpx.AsyncClient(base_url=ollama_base_url) as client:
-            response = await client.get("/api/tags")
-            response.raise_for_status()
-        models = response.json().get("models", [])
-        if models:
-            curr_model = models[0]['name']
+        default_model = config.get("default_model")
+        if default_model:
+            curr_model = default_model
             logging.info(f"Default model set to: {curr_model}")
         else:
-            logging.warning("No local Ollama models found. Please download a model to use the bot.")
+            ollama_base_url = config["ollama_base_url"].removesuffix("/v1")
+            async with httpx.AsyncClient(base_url=ollama_base_url) as client:
+                response = await client.get("/api/tags")
+                response.raise_for_status()
+            models = response.json().get("models", [])
+            if models:
+                curr_model = models[0]['name']
+                logging.info(f"Default model set to: {curr_model}")
+            else:
+                logging.warning("No local Ollama models found. Please download a model to use the bot.")
     except Exception as e:
-        logging.error(f"Could not connect to Ollama to set initial model: {e}")
+        logging.error(f"Could not connect to Ollama to set initial model at {config.get('ollama_base_url')}: {e}")
+        logging.warning("The bot will start, but will be unable to respond until a connection is established.")
+
 
     await discord_bot.tree.sync()
 
@@ -436,7 +495,7 @@ async def on_message(new_msg: discord.Message) -> None:
                         if edit_task is not None: await edit_task
                         
                         description = response_contents[-1] if is_final_edit else (response_contents[-1] + STREAMING_INDICATOR)
-                        cleaned_description = re.sub(r"<think>.*?</think>", "", description, flags=re.DOTALL).strip()
+                        cleaned_description = description.strip()
                         
                         embed.description = reply_quote + cleaned_description
                         embed.color = EMBED_COLOR_COMPLETE if msg_split_incoming or is_good_finish else EMBED_COLOR_INCOMPLETE
@@ -453,7 +512,7 @@ async def on_message(new_msg: discord.Message) -> None:
                         last_task_time = datetime.now().timestamp()
 
             if use_plain_responses:
-                cleaned_contents = [re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip() for content in response_contents]
+                cleaned_contents = [content.strip() for content in response_contents]
                 for content in cleaned_contents:
                     if not content: continue
                     reply_to_msg = new_msg if not response_msgs else response_msgs[-1]
@@ -461,14 +520,21 @@ async def on_message(new_msg: discord.Message) -> None:
                     response_msgs.append(response_msg)
                     msg_nodes[response_msg.id] = MsgNode(parent_msg=new_msg)
                     await msg_nodes[response_msg.id].lock.acquire()
+    except httpx.ConnectError:
+        logging.exception("Connection to Ollama failed")
+        await new_msg.channel.send("Sorry, I couldn't connect to Ollama. Please make sure it's running and accessible.")
+    except httpx.HTTPStatusError as e:
+        logging.exception(f"Ollama API returned an error: {e.response.status_code}")
+        await new_msg.channel.send(f"Sorry, I received an error from the Ollama API (Status: {e.response.status_code}). Please check the model or the Ollama server.")
     except Exception as e:
         logging.exception("Error while generating response")
-        await new_msg.channel.send(f"Sorry, an error occurred. Please try again.\nIf the problem persists, you might find help with `/ollamacord help`.")
+        await new_msg.channel.send(f"Sorry, an unexpected error occurred. Please try again.\nIf the problem persists, you might find help with `/ollamacord help`.")
+
 
     for response_msg in response_msgs:
         if response_msg.id in msg_nodes and msg_nodes[response_msg.id].lock.locked():
             full_text = "".join(response_contents)
-            cleaned_text = re.sub(r"<think>.*?</think>", "", full_text, flags=re.DOTALL).strip()
+            cleaned_text = full_text.strip()
             msg_nodes[response_msg.id].text = cleaned_text
             msg_nodes[response_msg.id].lock.release()
 
@@ -482,7 +548,16 @@ async def main() -> None:
     await discord_bot.start(config["bot_token"])
 
 if __name__ == "__main__":
+    if not config.get("bot_token"):
+        logging.critical("Bot token is missing from config.yaml. Please add it and try again.")
+        exit()
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
         pass
+    except httpx.ConnectError:
+        logging.critical(f"Could not connect to Ollama at {config.get('ollama_base_url')}. Please ensure Ollama is running and accessible.")
+    except Exception as e:
+        logging.critical(f"An unexpected error occurred during startup: {e}")
+
+
