@@ -31,7 +31,7 @@ This project is a fork of [llmcord](https://github.com/jakobdylanc/llmcord), red
 
 1.  **Clone the repo:**
     ```bash
-    git clone [https://github.com/datapush3r/ollamacord](https://github.com/datapush3r/ollamacord)
+    git clone https://github.com/datapush3r/ollamacord
     cd ollamacord
     ```
 2.  **Set up your configuration:**
