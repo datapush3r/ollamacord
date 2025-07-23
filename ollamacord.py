@@ -49,6 +49,7 @@ def save_config(data: dict[str, Any], filename: str = "config.yaml"):
 
 config = get_config()
 curr_model = None # Will be set in on_ready as the global default
+session_prompt = None # Stores the system prompt for the current session
 msg_nodes = {}
 
 # --- Bot Initialization ---
@@ -94,6 +95,34 @@ async def local_ollama_model_autocomplete(interaction: discord.Interaction, curr
         logging.error(f"Error fetching local ollama models: {e}")
         return []
 
+# --- Permission Check ---
+async def is_authorized(interaction: discord.Interaction) -> bool:
+    current_config = await asyncio.to_thread(get_config)
+    
+    # If in a DM, check if DMs are allowed
+    if interaction.guild is None:
+        if current_config.get("allow_dms", True):
+            return True
+        else:
+            await interaction.response.send_message("This command is not available in DMs.", ephemeral=True)
+            return False
+
+    # If in a server, check for the authorized role
+    authorized_role_id = current_config.get("authorized_role_id")
+    if not authorized_role_id:
+        await interaction.response.send_message("The bot has not been configured with an authorized role. Please contact an administrator.", ephemeral=True)
+        return False
+
+    if not hasattr(interaction.user, 'roles'):
+        return False
+
+    user_roles = [role.id for role in interaction.user.roles]
+    if authorized_role_id not in user_roles:
+        await interaction.response.send_message("You do not have the required role to use this command.", ephemeral=True)
+        return False
+        
+    return True
+
 # --- Slash Commands ---
 ollamacord_group = Group(name="ollamacord", description="Commands for the Ollamacord bot.")
 
@@ -101,22 +130,21 @@ ollamacord_group = Group(name="ollamacord", description="Commands for the Ollama
 async def help_command(interaction: discord.Interaction):
     embed = discord.Embed(title="Ollamacord Help", description="Here's how to use the bot:", color=discord.Color.blue())
     embed.add_field(name="How to Chat", value="To start a conversation, just `@mention` me in any channel. To continue the conversation, simply reply to my messages.", inline=False)
-    embed.add_field(name="/ollamacord search", value="Search for new models to download from the Ollama library.", inline=False)
-    embed.add_field(name="/ollamacord download", value="Download a model from the Ollama library to use with the bot.", inline=False)
-    embed.add_field(name="/ollamacord switch", value="Temporarily switch the active model for the current session.", inline=False)
-    embed.add_field(name="Admin Commands", value="Admins can use `/ollamacord admin` to manage models.", inline=False)
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    embed.add_field(name="General Commands", value="`/ollamacord search` - Search for new models.\n`/ollamacord download` - Download a model.\n`/ollamacord switch` - Temporarily switch the active model.", inline=False)
+    embed.add_field(name="Management Commands", value="`/ollamacord list` - List local models.\n`/ollamacord show` - Show model details.\n`/ollamacord ps` - List running models.\n`/ollamacord rm` - Remove a local model.\n`/ollamacord setdefault` - Set the default model.\n`/ollamacord setvision` - Set the vision model.\n`/ollamacord setcode` - Set the code model.\n`/ollamacord setprompt` - Add to the system prompt for the current session.\n`/ollamacord getprompt` - Show the current system prompt.", inline=False)
+    await interaction.response.send_message(embed=embed, ephemeral=False)
 
 @ollamacord_group.command(name="search", description="Search for models in the Ollama library.")
 @discord.app_commands.autocomplete(query=search_models_autocomplete)
 async def model_search(interaction: discord.Interaction, query: str):
-    await interaction.response.defer(ephemeral=True)
+    if not await is_authorized(interaction): return
+    await interaction.response.defer(ephemeral=False)
     try:
         response = await httpx_client.get(f"{OLLAMA_API_BASE_URL}/models", params={"search": query, "limit": 10})
         response.raise_for_status()
         data = response.json()
         if not data.get("models"):
-            await interaction.followup.send("No models found for your query.", ephemeral=True)
+            await interaction.followup.send("No models found for your query.")
             return
         embed = discord.Embed(title=f"Search Results for '{query}'", color=discord.Color.blue())
         for model in data["models"]:
@@ -124,16 +152,17 @@ async def model_search(interaction: discord.Interaction, query: str):
             description = model.get('description', 'No description available.')
             pulls = model.get('pulls', 0)
             embed.add_field(name=name, value=f"**Pulls:** {pulls:,}\n{description}", inline=False)
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed)
     except httpx.RequestError as e:
-        await interaction.followup.send(f"An error occurred while connecting to the Ollama library: {e}", ephemeral=True)
+        await interaction.followup.send(f"An error occurred while connecting to the Ollama library: {e}")
     except httpx.HTTPStatusError as e:
-        await interaction.followup.send(f"The Ollama library returned an error: {e.response.status_code}", ephemeral=True)
+        await interaction.followup.send(f"The Ollama library returned an error: {e.response.status_code}")
 
 
 @ollamacord_group.command(name="download", description="Download a model from the Ollama library.")
 @discord.app_commands.autocomplete(model_name=search_models_autocomplete)
 async def model_download(interaction: discord.Interaction, model_name: str):
+    if not await is_authorized(interaction): return
     await interaction.response.defer(ephemeral=False)
     try:
         ollama_base_url = config["ollama_base_url"].removesuffix("/v1")
@@ -143,33 +172,24 @@ async def model_download(interaction: discord.Interaction, model_name: str):
             pull_response.raise_for_status()
         await interaction.followup.send(f"Model `{model_name}` has been downloaded successfully.")
     except httpx.ConnectError:
-        await interaction.followup.send(f"Could not connect to Ollama at {config['ollama_base_url']}. Please ensure it's running.", ephemeral=False)
+        await interaction.followup.send(f"Could not connect to Ollama at {config['ollama_base_url']}. Please ensure it's running.")
     except httpx.HTTPStatusError as e:
-        await interaction.followup.send(f"An HTTP error occurred while downloading: {e.response.text}", ephemeral=False)
+        await interaction.followup.send(f"An HTTP error occurred while downloading: {e.response.text}")
     except Exception as e:
-        await interaction.followup.send(f"An unexpected error occurred: {e}", ephemeral=False)
+        await interaction.followup.send(f"An unexpected error occurred: {e}")
 
 @ollamacord_group.command(name="switch", description="Temporarily switch the active model for this session.")
 @discord.app_commands.autocomplete(model=local_ollama_model_autocomplete)
 async def model_switch(interaction: discord.Interaction, model: str):
+    if not await is_authorized(interaction): return
     global curr_model
     curr_model = model
     output = f"Model for this session switched to: `{model}`"
     logging.info(f"Session model switched to: {model} by {interaction.user.id}")
-    await interaction.response.send_message(output, ephemeral=True)
-
-admin_group = Group(name="admin", description="Admin commands for managing the local Ollama instance.", parent=ollamacord_group)
-
-async def is_admin(interaction: discord.Interaction) -> bool:
-    current_config = await asyncio.to_thread(get_config)
-    if interaction.user.id not in current_config["permissions"]["users"]["admin_ids"]:
-        await interaction.response.send_message("You don't have permission to use this admin command.", ephemeral=True)
-        return False
-    return True
+    await interaction.response.send_message(output, ephemeral=False)
 
 async def set_model_in_config(interaction: discord.Interaction, model_name: str, model_type: str):
-    if not await is_admin(interaction): return
-    await interaction.response.defer(ephemeral=True)
+    await interaction.response.defer(ephemeral=False)
     try:
         current_config = await asyncio.to_thread(get_config)
         if 'model_settings' not in current_config:
@@ -181,31 +201,58 @@ async def set_model_in_config(interaction: discord.Interaction, model_name: str,
             global curr_model
             curr_model = model_name
             
-        await interaction.followup.send(f"{model_type.replace('_', ' ').title()} has been set to `{model_name}`.", ephemeral=True)
+        await interaction.followup.send(f"{model_type.replace('_', ' ').title()} has been set to `{model_name}`.")
     except IOError as e:
-        await interaction.followup.send(f"An error occurred while writing to the config file: {e}", ephemeral=True)
+        await interaction.followup.send(f"An error occurred while writing to the config file: {e}")
     except Exception as e:
-        await interaction.followup.send(f"An unexpected error occurred: {e}", ephemeral=True)
+        await interaction.followup.send(f"An unexpected error occurred: {e}")
 
-@admin_group.command(name="setdefault", description="Set the default model in the config file.")
+@ollamacord_group.command(name="setdefault", description="Set the default model in the config file.")
 @discord.app_commands.autocomplete(model_name=local_ollama_model_autocomplete)
-async def admin_setdefault(interaction: discord.Interaction, model_name: str):
+async def setdefault(interaction: discord.Interaction, model_name: str):
+    if not await is_authorized(interaction): return
     await set_model_in_config(interaction, model_name, "default_model")
 
-@admin_group.command(name="setvision", description="Set the vision model in the config file.")
+@ollamacord_group.command(name="setvision", description="Set the vision model in the config file.")
 @discord.app_commands.autocomplete(model_name=local_ollama_model_autocomplete)
-async def admin_setvision(interaction: discord.Interaction, model_name: str):
+async def setvision(interaction: discord.Interaction, model_name: str):
+    if not await is_authorized(interaction): return
     await set_model_in_config(interaction, model_name, "vision_model")
 
-@admin_group.command(name="setcode", description="Set the code model in the config file.")
+@ollamacord_group.command(name="setcode", description="Set the code model in the config file.")
 @discord.app_commands.autocomplete(model_name=local_ollama_model_autocomplete)
-async def admin_setcode(interaction: discord.Interaction, model_name: str):
+async def setcode(interaction: discord.Interaction, model_name: str):
+    if not await is_authorized(interaction): return
     await set_model_in_config(interaction, model_name, "code_model")
 
-@admin_group.command(name="list", description="List all models available locally.")
-async def admin_list(interaction: discord.Interaction):
-    if not await is_admin(interaction): return
-    await interaction.response.defer(ephemeral=True)
+@ollamacord_group.command(name="setprompt", description="Add to the system prompt for the current session.")
+async def setprompt(interaction: discord.Interaction, prompt: str):
+    if not await is_authorized(interaction): return
+    global session_prompt
+    session_prompt = prompt
+    await interaction.response.send_message("The system prompt for this session has been updated.", ephemeral=False)
+
+@ollamacord_group.command(name="getprompt", description="Show the current system prompt.")
+async def getprompt(interaction: discord.Interaction):
+    if not await is_authorized(interaction): return
+    
+    current_config = await asyncio.to_thread(get_config)
+    base_prompt = current_config.get("system_prompt", "")
+    session_specific_prompt = session_prompt or ""
+    
+    combined_prompt = f"{base_prompt}\n\n{session_specific_prompt}".strip()
+    
+    if not combined_prompt:
+        await interaction.response.send_message("No system prompt is currently set.", ephemeral=False)
+        return
+
+    embed = discord.Embed(title="Current System Prompt", description=combined_prompt, color=discord.Color.blue())
+    await interaction.response.send_message(embed=embed, ephemeral=False)
+
+@ollamacord_group.command(name="list", description="List all models available locally.")
+async def list_models(interaction: discord.Interaction):
+    if not await is_authorized(interaction): return
+    await interaction.response.defer(ephemeral=False)
     try:
         ollama_base_url = config["ollama_base_url"].removesuffix("/v1")
         async with httpx.AsyncClient(base_url=ollama_base_url) as ollama_client:
@@ -213,22 +260,22 @@ async def admin_list(interaction: discord.Interaction):
             response.raise_for_status()
         models = response.json().get("models", [])
         if not models:
-            await interaction.followup.send("No local models found.", ephemeral=True)
+            await interaction.followup.send("No local models found.")
             return
         embed = discord.Embed(title="Local Ollama Models", color=discord.Color.blue())
         description = "\n".join([f"**{model.get('name')}** ({model.get('size', 0) / (1024**3):.2f} GB)" for model in models])
         embed.description = description
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed)
     except httpx.ConnectError:
-        await interaction.followup.send(f"Could not connect to Ollama at {config['ollama_base_url']}.", ephemeral=True)
+        await interaction.followup.send(f"Could not connect to Ollama at {config['ollama_base_url']}.")
     except Exception as e:
-        await interaction.followup.send(f"An error occurred: {e}", ephemeral=True)
+        await interaction.followup.send(f"An error occurred: {e}")
 
-@admin_group.command(name="show", description="Show detailed information for a local model.")
+@ollamacord_group.command(name="show", description="Show detailed information for a local model.")
 @discord.app_commands.autocomplete(model_name=local_ollama_model_autocomplete)
-async def admin_show(interaction: discord.Interaction, model_name: str):
-    if not await is_admin(interaction): return
-    await interaction.response.defer(ephemeral=True)
+async def show(interaction: discord.Interaction, model_name: str):
+    if not await is_authorized(interaction): return
+    await interaction.response.defer(ephemeral=False)
     try:
         ollama_base_url = config["ollama_base_url"].removesuffix("/v1")
         async with httpx.AsyncClient(base_url=ollama_base_url) as ollama_client:
@@ -241,21 +288,21 @@ async def admin_show(interaction: discord.Interaction, model_name: str):
         if details := data.get("details"):
             detail_str = "\n".join([f"**{k.replace('_', ' ').title()}**: {v}" for k,v in details.items()])
             embed.add_field(name="Details", value=detail_str, inline=False)
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed)
     except httpx.ConnectError:
-        await interaction.followup.send(f"Could not connect to Ollama at {config['ollama_base_url']}.", ephemeral=True)
+        await interaction.followup.send(f"Could not connect to Ollama at {config['ollama_base_url']}.")
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
-            await interaction.followup.send(f"Model `{model_name}` not found locally.", ephemeral=True)
+            await interaction.followup.send(f"Model `{model_name}` not found locally.")
         else:
-            await interaction.followup.send(f"An HTTP error occurred: {e.response.text}", ephemeral=True)
+            await interaction.followup.send(f"An HTTP error occurred: {e.response.text}")
     except Exception as e:
-        await interaction.followup.send(f"An error occurred: {e}", ephemeral=True)
+        await interaction.followup.send(f"An error occurred: {e}")
 
-@admin_group.command(name="ps", description="List running models on Ollama.")
-async def admin_ps(interaction: discord.Interaction):
-    if not await is_admin(interaction): return
-    await interaction.response.defer(ephemeral=True)
+@ollamacord_group.command(name="ps", description="List running models on Ollama.")
+async def ps(interaction: discord.Interaction):
+    if not await is_authorized(interaction): return
+    await interaction.response.defer(ephemeral=False)
     try:
         ollama_base_url = config["ollama_base_url"].removesuffix("/v1")
         async with httpx.AsyncClient(base_url=ollama_base_url) as ollama_client:
@@ -263,43 +310,37 @@ async def admin_ps(interaction: discord.Interaction):
             response.raise_for_status()
         models = response.json().get("models", [])
         if not models:
-            await interaction.followup.send("No models are currently running.", ephemeral=True)
+            await interaction.followup.send("No models are currently running.")
             return
         embed = discord.Embed(title="Running Ollama Models", color=discord.Color.green())
         description = "\n".join([f"**{m.get('name')}** ({m.get('size', 0) / (1024**3):.2f} GB)" for m in models])
         embed.description = description
-        await interaction.followup.send(embed=embed, ephemeral=True)
+        await interaction.followup.send(embed=embed)
     except httpx.ConnectError:
-        await interaction.followup.send(f"Could not connect to Ollama at {config['ollama_base_url']}.", ephemeral=True)
+        await interaction.followup.send(f"Could not connect to Ollama at {config['ollama_base_url']}.")
     except Exception as e:
-        await interaction.followup.send(f"An error occurred: {e}\n(Note: This command may require a recent version of Ollama.)", ephemeral=True)
+        await interaction.followup.send(f"An error occurred: {e}\n(Note: This command may require a recent version of Ollama.)")
 
-@admin_group.command(name="rm", description="Remove a local model.")
+@ollamacord_group.command(name="rm", description="Remove a local model.")
 @discord.app_commands.autocomplete(model_name=local_ollama_model_autocomplete)
-async def admin_rm(interaction: discord.Interaction, model_name: str):
-    if not await is_admin(interaction): return
-    await interaction.response.defer(ephemeral=True)
+async def rm(interaction: discord.Interaction, model_name: str):
+    if not await is_authorized(interaction): return
+    await interaction.response.defer(ephemeral=False)
     try:
         ollama_base_url = config["ollama_base_url"].removesuffix("/v1")
         async with httpx.AsyncClient(base_url=ollama_base_url) as ollama_client:
             response = await ollama_client.request("DELETE", "/api/delete", json={"name": model_name})
             response.raise_for_status()
-        await interaction.followup.send(f"Successfully removed model `{model_name}`.", ephemeral=True)
+        await interaction.followup.send(f"Successfully removed model `{model_name}`.")
     except httpx.ConnectError:
-        await interaction.followup.send(f"Could not connect to Ollama at {config['ollama_base_url']}.", ephemeral=True)
+        await interaction.followup.send(f"Could not connect to Ollama at {config['ollama_base_url']}.")
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 404:
-            await interaction.followup.send(f"Model `{model_name}` not found, so it could not be removed.", ephemeral=True)
+            await interaction.followup.send(f"Model `{model_name}` not found, so it could not be removed.")
         else:
-            await interaction.followup.send(f"An HTTP error occurred: {e.response.text}", ephemeral=True)
+            await interaction.followup.send(f"An HTTP error occurred: {e.response.text}")
     except Exception as e:
-        await interaction.followup.send(f"An error occurred: {e}", ephemeral=True)
-
-@admin_group.command(name="pull", description="Pull a model from a registry.")
-@discord.app_commands.autocomplete(model_name=search_models_autocomplete)
-async def admin_pull(interaction: discord.Interaction, model_name: str):
-    if not await is_admin(interaction): return
-    await model_download.callback(interaction, model_name)
+        await interaction.followup.send(f"An error occurred: {e}")
 
 # --- Bot Events ---
 @discord_bot.event
@@ -343,6 +384,19 @@ async def on_message(new_msg: discord.Message) -> None:
         
     config = await asyncio.to_thread(get_config)
     
+    # --- Permission Check ---
+    if is_dm:
+        if not config.get("allow_dms", True):
+            return
+    else: # It's a server message
+        authorized_role_id = config.get("authorized_role_id")
+        if not authorized_role_id:
+            logging.warning("authorized_role_id is not set in config.yaml. The bot will not respond to messages.")
+            return
+
+        if not hasattr(new_msg.author, 'roles') or authorized_role_id not in [role.id for role in new_msg.author.roles]:
+            return
+    
     # --- Context-aware Model Selection ---
     model_settings = config.get("model_settings", {})
     default_model = model_settings.get("default_model", curr_model)
@@ -357,7 +411,7 @@ async def on_message(new_msg: discord.Message) -> None:
         if vision_model:
             model_to_use = vision_model
         else:
-            await new_msg.channel.send("An image was attached, but no vision model is configured. Please ask an admin to set one with `/ollamacord admin setvision`.")
+            await new_msg.channel.send("An image was attached, but no vision model is configured. Please ask an admin to set one with `/ollamacord setvision`.")
             return
 
     # Check for code
@@ -366,31 +420,11 @@ async def on_message(new_msg: discord.Message) -> None:
         if code_model:
             model_to_use = code_model
         else:
-            await new_msg.channel.send("Code was detected, but no code model is configured. Please ask an admin to set one with `/ollamacord admin setcode`.")
+            await new_msg.channel.send("Code was detected, but no code model is configured. Please ask an admin to set one with `/ollamacord setcode`.")
             return
 
     if not model_to_use:
-        await new_msg.channel.send("I can't respond right now because no default model is configured. Please ask an admin to set one with `/ollamacord admin setdefault`.")
-        return
-
-    permissions = config["permissions"]
-    user_is_admin = new_msg.author.id in permissions["users"]["admin_ids"]
-    role_ids = set(role.id for role in getattr(new_msg.author, "roles", ()))
-    channel_ids = set(filter(None, (new_msg.channel.id, getattr(new_msg.channel, "parent_id", None), getattr(new_msg.channel, "category_id", None))))
-
-    (allowed_user_ids, blocked_user_ids), (allowed_role_ids, blocked_role_ids), (allowed_channel_ids, blocked_channel_ids) = (
-        (perm["allowed_ids"], perm["blocked_ids"]) for perm in (permissions["users"], permissions["roles"], permissions["channels"])
-    )
-    allow_all_users = not allowed_user_ids if is_dm else not allowed_user_ids and not allowed_role_ids
-    is_good_user = user_is_admin or allow_all_users or new_msg.author.id in allowed_user_ids or any(id in allowed_role_ids for id in role_ids)
-    is_bad_user = not is_good_user or new_msg.author.id in blocked_user_ids or any(id in blocked_role_ids for id in role_ids)
-
-    allow_dms = config.get("allow_dms", True)
-    allow_all_channels = not allowed_channel_ids
-    is_good_channel = user_is_admin or allow_dms if is_dm else allow_all_channels or any(id in allowed_channel_ids for id in channel_ids)
-    is_bad_channel = not is_good_channel or any(id in blocked_channel_ids for id in channel_ids)
-
-    if is_bad_user or is_bad_channel:
+        await new_msg.channel.send("I can't respond right now because no default model is configured. Please ask an admin to set one with `/ollamacord setdefault`.")
         return
 
     model_parameters = None # Simplified
@@ -491,11 +525,17 @@ async def on_message(new_msg: discord.Message) -> None:
 
     logging.info(f"Message received (user ID: {new_msg.author.id}, attachments: {len(new_msg.attachments)}, conversation length: {len(messages)}):\n{new_msg.content}")
 
-    if system_prompt := config.get("system_prompt"):
-        now = datetime.now().astimezone()
-        system_prompt = system_prompt.replace("{date}", now.strftime("%B %d %Y")).replace("{time}", now.strftime("%H:%M:%S %Z%z")).strip()
-        messages.append(dict(role="system", content=system_prompt))
+    # Determine which system prompt to use
+    base_prompt = config.get("system_prompt", "")
+    session_specific_prompt = session_prompt or ""
+    
+    # Combine prompts, ensuring the base prompt is always included if it exists.
+    combined_prompt = f"{base_prompt}\n\n{session_specific_prompt}".strip()
 
+    if combined_prompt:
+        now = datetime.now().astimezone()
+        final_system_prompt = combined_prompt.replace("{date}", now.strftime("%B %d %Y")).replace("{time}", now.strftime("%H:%M:%S %Z%z")).strip()
+        messages.append(dict(role="system", content=final_system_prompt))
     
     quoted_content = new_msg.content
     if quoted_content.lower().startswith("user:"):
