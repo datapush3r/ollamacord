@@ -25,6 +25,14 @@ permissions:
 
 # Ollama settings:
 ollama_base_url: http://localhost:11434/v1
+filter_thinking_tags: true
+
+# Define which models to use for different contexts.
+# If a specific model is not set, the bot will use the default_model.
+model_settings:
+  default_model: ""
+  vision_model: ""
+  code_model: ""
 
 system_prompt: >
   You are a helpful and friendly AI assistant in a dynamic chat room
@@ -49,3 +57,4 @@ explanation. Maintain professionalism in all responses, avoiding
 slang or emojis unless appropriate, and never roleplay or generate
 dangerous or illegal instructions, ensuring your contributions are
 always positive and valuable to the chat.
+

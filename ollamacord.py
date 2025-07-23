@@ -22,11 +22,14 @@ logging.basicConfig(
 
 VISION_MODEL_TAGS = ("gemma", "llama", "pixtral", "mistral", "vision", "vl")
 EMBED_COLOR_COMPLETE = discord.Color.dark_green()
-EMBED_COLOR_INCOMPLETE = discord.Color.orange()
-STREAMING_INDICATOR = " ⚪"
-EDIT_DELAY_SECONDS = 1
 MAX_MESSAGE_NODES = 500
 OLLAMA_API_BASE_URL = "https://ollamadb.dev/api/v1"
+CODE_FILE_EXTENSIONS = (
+    ".py", ".js", ".ts", ".html", ".css", ".scss", ".java", ".c", ".cpp", ".cs",
+    ".go", ".rb", ".php", ".rs", ".swift", ".kt", ".lua", ".pl", ".sh", ".json",
+    ".yaml", ".yml", ".md", ".sql", ".dockerfile", "Dockerfile", ".xml", ".bat"
+)
+
 
 # --- Config and State ---
 def get_config(filename: str = "config.yaml") -> dict[str, Any]:
@@ -45,9 +48,8 @@ def save_config(data: dict[str, Any], filename: str = "config.yaml"):
         yaml.dump(data, file)
 
 config = get_config()
-curr_model = None # Will be set in on_ready
+curr_model = None # Will be set in on_ready as the global default
 msg_nodes = {}
-last_task_time = 0
 
 # --- Bot Initialization ---
 intents = discord.Intents.default()
@@ -101,8 +103,8 @@ async def help_command(interaction: discord.Interaction):
     embed.add_field(name="How to Chat", value="To start a conversation, just `@mention` me in any channel. To continue the conversation, simply reply to my messages.", inline=False)
     embed.add_field(name="/ollamacord search", value="Search for new models to download from the Ollama library.", inline=False)
     embed.add_field(name="/ollamacord download", value="Download a model from the Ollama library to use with the bot.", inline=False)
-    embed.add_field(name="/ollamacord switch", value="Switch between your locally downloaded models.", inline=False)
-    embed.add_field(name="Admin Commands", value="Admins can use `/ollamacord admin` to `list`, `show`, `rm`, `pull`, and `setdefault` local models.", inline=False)
+    embed.add_field(name="/ollamacord switch", value="Temporarily switch the active model for the current session.", inline=False)
+    embed.add_field(name="Admin Commands", value="Admins can use `/ollamacord admin` to manage models.", inline=False)
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 @ollamacord_group.command(name="search", description="Search for models in the Ollama library.")
@@ -147,16 +149,13 @@ async def model_download(interaction: discord.Interaction, model_name: str):
     except Exception as e:
         await interaction.followup.send(f"An unexpected error occurred: {e}", ephemeral=False)
 
-@ollamacord_group.command(name="switch", description="Switch the current active model.")
+@ollamacord_group.command(name="switch", description="Temporarily switch the active model for this session.")
 @discord.app_commands.autocomplete(model=local_ollama_model_autocomplete)
 async def model_switch(interaction: discord.Interaction, model: str):
     global curr_model
-    if model == curr_model:
-        output = f"Current model is already `{model}`."
-    else:
-        curr_model = model
-        output = f"Model switched to: `{model}`"
-        logging.info(output)
+    curr_model = model
+    output = f"Model for this session switched to: `{model}`"
+    logging.info(f"Session model switched to: {model} by {interaction.user.id}")
     await interaction.response.send_message(output, ephemeral=True)
 
 admin_group = Group(name="admin", description="Admin commands for managing the local Ollama instance.", parent=ollamacord_group)
@@ -168,22 +167,40 @@ async def is_admin(interaction: discord.Interaction) -> bool:
         return False
     return True
 
-@admin_group.command(name="setdefault", description="Set the default model in the config file.")
-@discord.app_commands.autocomplete(model_name=local_ollama_model_autocomplete)
-async def admin_setdefault(interaction: discord.Interaction, model_name: str):
+async def set_model_in_config(interaction: discord.Interaction, model_name: str, model_type: str):
     if not await is_admin(interaction): return
     await interaction.response.defer(ephemeral=True)
     try:
         current_config = await asyncio.to_thread(get_config)
-        current_config['default_model'] = model_name
+        if 'model_settings' not in current_config:
+            current_config['model_settings'] = {}
+        current_config['model_settings'][model_type] = model_name
         await asyncio.to_thread(save_config, current_config)
-        global curr_model
-        curr_model = model_name
-        await interaction.followup.send(f"Default model has been set to `{model_name}`.", ephemeral=True)
+        
+        if model_type == 'default_model':
+            global curr_model
+            curr_model = model_name
+            
+        await interaction.followup.send(f"{model_type.replace('_', ' ').title()} has been set to `{model_name}`.", ephemeral=True)
     except IOError as e:
         await interaction.followup.send(f"An error occurred while writing to the config file: {e}", ephemeral=True)
     except Exception as e:
-        await interaction.followup.send(f"An unexpected error occurred while setting the default model: {e}", ephemeral=True)
+        await interaction.followup.send(f"An unexpected error occurred: {e}", ephemeral=True)
+
+@admin_group.command(name="setdefault", description="Set the default model in the config file.")
+@discord.app_commands.autocomplete(model_name=local_ollama_model_autocomplete)
+async def admin_setdefault(interaction: discord.Interaction, model_name: str):
+    await set_model_in_config(interaction, model_name, "default_model")
+
+@admin_group.command(name="setvision", description="Set the vision model in the config file.")
+@discord.app_commands.autocomplete(model_name=local_ollama_model_autocomplete)
+async def admin_setvision(interaction: discord.Interaction, model_name: str):
+    await set_model_in_config(interaction, model_name, "vision_model")
+
+@admin_group.command(name="setcode", description="Set the code model in the config file.")
+@discord.app_commands.autocomplete(model_name=local_ollama_model_autocomplete)
+async def admin_setcode(interaction: discord.Interaction, model_name: str):
+    await set_model_in_config(interaction, model_name, "code_model")
 
 @admin_group.command(name="list", description="List all models available locally.")
 async def admin_list(interaction: discord.Interaction):
@@ -294,7 +311,8 @@ async def on_ready() -> None:
     
     # Set the initial model
     try:
-        default_model = config.get("default_model")
+        model_settings = config.get("model_settings", {})
+        default_model = model_settings.get("default_model")
         if default_model:
             curr_model = default_model
             logging.info(f"Default model set to: {curr_model}")
@@ -318,17 +336,43 @@ async def on_ready() -> None:
 
 @discord_bot.event
 async def on_message(new_msg: discord.Message) -> None:
-    global last_task_time
     is_dm = new_msg.channel.type == discord.ChannelType.private
 
     if (not is_dm and discord_bot.user not in new_msg.mentions) or new_msg.author.bot:
         return
+        
+    config = await asyncio.to_thread(get_config)
+    
+    # --- Context-aware Model Selection ---
+    model_settings = config.get("model_settings", {})
+    default_model = model_settings.get("default_model", curr_model)
+    vision_model = model_settings.get("vision_model", default_model)
+    code_model = model_settings.get("code_model", default_model)
+    
+    model_to_use = default_model
 
-    if not curr_model:
-        await new_msg.channel.send("I can't respond right now because no Ollama models are available. An admin can download one using `/ollamacord download`.")
+    # Check for image attachments
+    has_image = any(att.content_type and att.content_type.startswith("image") for att in new_msg.attachments)
+    if has_image:
+        if vision_model:
+            model_to_use = vision_model
+        else:
+            await new_msg.channel.send("An image was attached, but no vision model is configured. Please ask an admin to set one with `/ollamacord admin setvision`.")
+            return
+
+    # Check for code
+    has_code = "```" in new_msg.content or any(att.filename.endswith(ext) for ext in CODE_FILE_EXTENSIONS for att in new_msg.attachments)
+    if not has_image and has_code:
+        if code_model:
+            model_to_use = code_model
+        else:
+            await new_msg.channel.send("Code was detected, but no code model is configured. Please ask an admin to set one with `/ollamacord admin setcode`.")
+            return
+
+    if not model_to_use:
+        await new_msg.channel.send("I can't respond right now because no default model is configured. Please ask an admin to set one with `/ollamacord admin setdefault`.")
         return
 
-    config = await asyncio.to_thread(get_config)
     permissions = config["permissions"]
     user_is_admin = new_msg.author.id in permissions["users"]["admin_ids"]
     role_ids = set(role.id for role in getattr(new_msg.author, "roles", ()))
@@ -349,15 +393,14 @@ async def on_message(new_msg: discord.Message) -> None:
     if is_bad_user or is_bad_channel:
         return
 
-    model = curr_model
     model_parameters = None # Simplified
 
     try:
         ollama_base_url = config["ollama_base_url"].removesuffix("/v1")
         async with httpx.AsyncClient(base_url=ollama_base_url) as ollama_client:
-            response = await ollama_client.post("/api/show", json={"name": model}, timeout=5)
+            response = await ollama_client.post("/api/show", json={"name": model_to_use}, timeout=5)
             if response.status_code == 404:
-                await new_msg.channel.send(f"Model `{model}` not found locally. You can try to download it with `/ollamacord download`.")
+                await new_msg.channel.send(f"Model `{model_to_use}` not found locally. You can try to download it with `/ollamacord download`.")
                 return
             response.raise_for_status()
     except (httpx.RequestError, httpx.HTTPStatusError) as e:
@@ -367,7 +410,7 @@ async def on_message(new_msg: discord.Message) -> None:
 
     openai_client = AsyncOpenAI(base_url=config["ollama_base_url"], api_key="sk-no-key-required")
 
-    accept_images = any(x in model.lower() for x in VISION_MODEL_TAGS)
+    accept_images = any(x in model_to_use.lower() for x in VISION_MODEL_TAGS)
     max_text = config.get("max_text", 100000)
     max_images = config.get("max_images", 5) if accept_images else 0
     max_messages = config.get("max_messages", 25)
@@ -453,73 +496,58 @@ async def on_message(new_msg: discord.Message) -> None:
         system_prompt = system_prompt.replace("{date}", now.strftime("%B %d %Y")).replace("{time}", now.strftime("%H:%M:%S %Z%z")).strip()
         messages.append(dict(role="system", content=system_prompt))
 
-    curr_content = finish_reason = edit_task = None
-    response_msgs = []
-    response_contents = []
     
     quoted_content = new_msg.content
     if quoted_content.lower().startswith("user:"):
         quoted_content = quoted_content[len("user:"):].lstrip()
     reply_quote = f"**Replying to {new_msg.author.display_name}**\n> {quoted_content[:250]}\n\n"
     
-    embed = discord.Embed(color=EMBED_COLOR_INCOMPLETE)
-    for warning in sorted(user_warnings):
-        embed.add_field(name=warning, value="", inline=False)
-
     use_plain_responses = config.get("use_plain_responses", False)
-    max_message_length = 2000 if use_plain_responses else (4096 - len(STREAMING_INDICATOR) - len(reply_quote))
+    filter_thinking = config.get("filter_thinking_tags", True)
+    max_message_length = 2000 if use_plain_responses else (4096 - len(reply_quote))
 
     try:
         async with new_msg.channel.typing():
-            async for curr_chunk in await openai_client.chat.completions.create(model=model, messages=messages[::-1], stream=True, extra_body=model_parameters):
-                if finish_reason is not None: break
-                if not (choice := curr_chunk.choices[0] if curr_chunk.choices else None): continue
-                finish_reason = choice.finish_reason
-                prev_content = curr_content or ""
-                curr_content = choice.delta.content or ""
-                new_content = prev_content if finish_reason is None else (prev_content + curr_content)
+            # Get the full response from the model
+            completion = await openai_client.chat.completions.create(model=model_to_use, messages=messages[::-1], stream=False, extra_body=model_parameters)
+            full_response_content = completion.choices[0].message.content or ""
 
-                if response_contents == [] and new_content == "": continue
+            # Filter the full response if the setting is enabled
+            if filter_thinking:
+                final_content = re.sub(r"<think(ing)?>.*?</think(ing)?>", "", full_response_content, flags=re.DOTALL).strip()
+            else:
+                final_content = full_response_content.strip()
 
-                if start_next_msg := response_contents == [] or len(response_contents[-1] + new_content) > max_message_length:
-                    response_contents.append("")
-                response_contents[-1] += new_content
+            # Split the message into chunks if it's too long
+            response_chunks = []
+            if final_content:
+                for i in range(0, len(final_content), max_message_length):
+                    response_chunks.append(final_content[i:i + max_message_length])
+            else: # Send a placeholder if the response is empty after filtering
+                response_chunks.append("...")
 
-                if not use_plain_responses:
-                    ready_to_edit = (edit_task is None or edit_task.done()) and datetime.now().timestamp() - last_task_time >= EDIT_DELAY_SECONDS
-                    msg_split_incoming = finish_reason is None and len(response_contents[-1] + curr_content) > max_message_length
-                    is_final_edit = finish_reason is not None or msg_split_incoming
-                    is_good_finish = finish_reason is not None and finish_reason.lower() in ("stop", "end_turn")
+            # Send the response chunks
+            response_msgs = []
+            for i, chunk in enumerate(response_chunks):
+                reply_to_msg = new_msg if not response_msgs else response_msgs[-1]
+                
+                if use_plain_responses:
+                    response_msg = await reply_to_msg.reply(content=chunk, silent=True)
+                else:
+                    embed = discord.Embed(color=EMBED_COLOR_COMPLETE)
+                    if i == 0: # Only add the quote and warnings to the first message
+                        embed.description = reply_quote + chunk
+                        for warning in sorted(user_warnings):
+                            embed.add_field(name=warning, value="", inline=False)
+                    else:
+                        embed.description = chunk
+                    embed.set_footer(text=f"Model: {model_to_use}")
+                    response_msg = await reply_to_msg.reply(embed=embed, silent=True)
+                
+                response_msgs.append(response_msg)
+                # Store node for conversation history
+                msg_nodes[response_msg.id] = MsgNode(text=chunk, parent_msg=new_msg)
 
-                    if start_next_msg or ready_to_edit or is_final_edit:
-                        if edit_task is not None: await edit_task
-                        
-                        description = response_contents[-1] if is_final_edit else (response_contents[-1] + STREAMING_INDICATOR)
-                        cleaned_description = description.strip()
-                        
-                        embed.description = reply_quote + cleaned_description
-                        embed.color = EMBED_COLOR_COMPLETE if msg_split_incoming or is_good_finish else EMBED_COLOR_INCOMPLETE
-                        embed.set_footer(text=f"Model: {model}")
-
-                        if start_next_msg:
-                            reply_to_msg = new_msg if not response_msgs else response_msgs[-1]
-                            response_msg = await reply_to_msg.reply(embed=embed, silent=True)
-                            response_msgs.append(response_msg)
-                            msg_nodes[response_msg.id] = MsgNode(parent_msg=new_msg)
-                            await msg_nodes[response_msg.id].lock.acquire()
-                        else:
-                            edit_task = asyncio.create_task(response_msgs[-1].edit(embed=embed))
-                        last_task_time = datetime.now().timestamp()
-
-            if use_plain_responses:
-                cleaned_contents = [content.strip() for content in response_contents]
-                for content in cleaned_contents:
-                    if not content: continue
-                    reply_to_msg = new_msg if not response_msgs else response_msgs[-1]
-                    response_msg = await reply_to_msg.reply(content=f"{content}\n\n*Model: {model}*", suppress_embeds=True)
-                    response_msgs.append(response_msg)
-                    msg_nodes[response_msg.id] = MsgNode(parent_msg=new_msg)
-                    await msg_nodes[response_msg.id].lock.acquire()
     except httpx.ConnectError:
         logging.exception("Connection to Ollama failed")
         await new_msg.channel.send("Sorry, I couldn't connect to Ollama. Please make sure it's running and accessible.")
@@ -529,14 +557,6 @@ async def on_message(new_msg: discord.Message) -> None:
     except Exception as e:
         logging.exception("Error while generating response")
         await new_msg.channel.send(f"Sorry, an unexpected error occurred. Please try again.\nIf the problem persists, you might find help with `/ollamacord help`.")
-
-
-    for response_msg in response_msgs:
-        if response_msg.id in msg_nodes and msg_nodes[response_msg.id].lock.locked():
-            full_text = "".join(response_contents)
-            cleaned_text = full_text.strip()
-            msg_nodes[response_msg.id].text = cleaned_text
-            msg_nodes[response_msg.id].lock.release()
 
     if (num_nodes := len(msg_nodes)) > MAX_MESSAGE_NODES:
         for msg_id in sorted(msg_nodes.keys())[: num_nodes - MAX_MESSAGE_NODES]:
@@ -559,5 +579,4 @@ if __name__ == "__main__":
         logging.critical(f"Could not connect to Ollama at {config.get('ollama_base_url')}. Please ensure Ollama is running and accessible.")
     except Exception as e:
         logging.critical(f"An unexpected error occurred during startup: {e}")
-
 
