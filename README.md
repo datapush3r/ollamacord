@@ -7,7 +7,7 @@
 </i></h3>
 
 <p align="center">
-  <img src="https://github.com/user-attachments/assets/7791cc6b-6755-484f-a9e3-0707765b081f" alt="Ollamacord in action">
+  <img width="616" height="688" alt="image" src="https://github.com/user-attachments/assets/3941ebe9-63ad-41eb-a9d3-4b0e2118683c" />
 </p>
 
 Ollamacord transforms Discord into a collaborative frontend for local language models, powered by [Ollama](https://ollama.com).
@@ -46,6 +46,10 @@ This project is a fork of [llmcord](https://github.com/jakobdylanc/llmcord), red
         ```
 
 ## Commands
+
+<p align="center">
+<img width="607" height="600" alt="image" src="https://github.com/user-attachments/assets/05d8d0c2-c655-4c40-b3ee-c6c938a45aad" />
+</p>
 
 All commands are restricted to the `authorized_role_id` set in your `config.yaml`.
 
